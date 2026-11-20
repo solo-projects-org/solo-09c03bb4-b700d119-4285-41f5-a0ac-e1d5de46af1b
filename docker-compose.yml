@@ -1,0 +1,41 @@
+services:
+  station-a:
+    build:
+      context: ./station
+    environment:
+      STATION_NAME: "维修站A"
+      STATION_DATA_DIR: /data
+    volumes:
+      - ./station/data/station_a:/data:ro
+    ports:
+      - "8001:8000"
+    restart: unless-stopped
+
+  station-b:
+    build:
+      context: ./station
+    environment:
+      STATION_NAME: "维修站B"
+      STATION_DATA_DIR: /data
+    volumes:
+      - ./station/data/station_b:/data:ro
+    ports:
+      - "8002:8000"
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./web
+    environment:
+      AVAILABLE_MONTHS: "2026-01,2026-02,2026-03,2026-04"
+      STATION_A_URL: "http://station-a:8000"
+      STATION_B_URL: "http://station-b:8000"
+      STATION_A_LABEL: "维修站A"
+      STATION_B_LABEL: "维修站B"
+      HTTP_TIMEOUT: "5"
+    ports:
+      - "8000:8000"
+    depends_on:
+      - station-a
+      - station-b
+    restart: unless-stopped

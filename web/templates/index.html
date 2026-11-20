@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>常备维修包 · 同单更换组合分析</title>
+  <style>
+    :root { --line: #d8dee6; --blue: #1f5fbf; --bg: #f5f7fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+           background: var(--bg); color: #1d2733; }
+    header { background: #10345f; color: #fff; padding: 18px 28px; }
+    header h1 { margin: 0; font-size: 20px; }
+    header p { margin: 6px 0 0; font-size: 13px; opacity: .82; }
+    main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+            padding: 20px 24px; margin-bottom: 20px; }
+    form { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+    label { font-size: 13px; color: #475569; display: block; margin-bottom: 6px; }
+    select, input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+                    font-size: 14px; min-width: 160px; }
+    button { background: var(--blue); color: #fff; border: 0; border-radius: 6px;
+             padding: 9px 22px; font-size: 14px; cursor: pointer; }
+    button:hover { background: #184c99; }
+    .error { background: #fdecec; border: 1px solid #f3b4b4; color: #9b1c1c;
+             padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 18px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 10px 12px; text-align: right; }
+    th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+    th { background: #eef2f7; font-weight: 600; color: #334155; }
+    tr:last-child td { border-bottom: 0; }
+    .meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; font-size: 13px; color: #475569; }
+    .pill { background: #eef2f7; border-radius: 999px; padding: 5px 12px; }
+    h2 { font-size: 16px; margin: 0 0 14px; }
+    .muted { color: #64748b; font-size: 12px; margin-top: 8px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>常备维修包 · 同单更换组合分析</h1>
+  <p>按两维修站同单更换次数之和，列出前 K 个零件组合（同分按编号字典序）</p>
+</header>
+<main>
+  <section class="card">
+    <form method="get" action="/query">
+      <div>
+        <label for="month">月份</label>
+        <select id="month" name="month">
+          {% for m in months %}
+          <option value="{{ m }}" {% if m == selected_month %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label for="k">K（前多少名）</label>
+        <input id="k" name="k" type="number" min="1" step="1"
+               value="{{ selected_k or '' }}" placeholder="例如 5" required>
+      </div>
+      <button type="submit">查询</button>
+    </form>
+  </section>
+
+  {% if error %}
+  <div class="error" role="alert">{{ error }}</div>
+  {% endif %}
+
+  {% if result %}
+  <section class="card">
+    <h2>{{ result.month }} · 前 {{ result.k }} 个组合（实际返回 {{ result.results|length }} 个）</h2>
+    <table>
+      <thead>
+      <tr>
+        <th>名次</th>
+        <th>组合编号</th>
+        {% for label, pages in result.pages_fetched.items() %}
+        <th>{{ label }} 次数</th>
+        {% endfor %}
+        <th>两站次数之和</th>
+      </tr>
+      </thead>
+      <tbody>
+      {% for row in result.results %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ row.combo_id }}</td>
+        {% for label, cnt in row.per_station.items() %}
+        <td>{{ cnt }}</td>
+        {% endfor %}
+        <td><strong>{{ row.total }}</strong></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    <div class="meta">
+      <span class="pill">实际翻页数（每页 5 条）：
+        {% for label, pages in result.pages_fetched.items() %}
+          {{ label }} {{ pages }} 页{% if not loop.last %}；{% endif %}
+        {% endfor %}
+      </span>
+      <span class="pill">点查次数：
+        {% for label, n in result.count_queries.items() %}
+          {{ label }} {{ n }} 次{% if not loop.last %}；{% endif %}
+        {% endfor %}
+      </span>
+    </div>
+    <p class="muted">说明：系统在能确认前 K 名的名单与次序时立即停止翻页；未在某站榜单出现的组合按缺号计 0（通过编号点查确认）。</p>
+  </section>
+  {% endif %}
+</main>
+</body>
+</html>

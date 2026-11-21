@@ -1,8 +1,14 @@
 """中心分析网页（Flask）。
 
-页面：选月份、填 K，按两站次数之和列出前 K 个组合（同分按编号字典序），
-同时展示每站次数和实际翻页数。取数严格通过站点的两个受控接口进行，
-任一站点失败时只提示出错站点，用户可重新查询。
+页面一：选月份、填 K，按两站次数之和列出前 K 个组合（同分按编号字典序），
+同时展示每站次数和实际翻页数。
+
+页面二（月报核对）：按月份拉取两站当期同版数据，找出“同编号不同零件组”
+或“同零件组不同编号”的冲突组（间接相连的也归在一起），只对冲突组
+索取完整零件清单；缺定义的记录单列待补。页面标出两站各自的版号。
+
+取数严格通过站点的受控接口进行，任一站点失败时只提示出错站点，
+用户可重新查询。
 """
 from __future__ import annotations
 
@@ -16,6 +22,7 @@ from typing import Any
 from flask import Flask, render_template, request
 
 from aggregator import StationError, top_k
+from reconcile import reconcile
 
 MONTHS = [m.strip() for m in os.environ.get("AVAILABLE_MONTHS", "2026-01,2026-02,2026-03").split(",") if m.strip()]
 STATION_A_URL = os.environ.get("STATION_A_URL", "http://station-a:8000")
@@ -57,6 +64,25 @@ def make_fetchers(base_url: str):
         return _http_get_json(base_url, "/api/count", {"month": month, "combo": combo})
 
     return rank_fetcher, count_fetcher
+
+
+def make_report_fetchers(base_url: str):
+    """月报核对接口：元信息、同版分页、同版完整零件清单。"""
+
+    def meta_fetcher(month: str) -> dict:
+        return _http_get_json(base_url, "/api/report/meta", {"month": month})
+
+    def page_fetcher(month: str, version: str, page: int) -> dict:
+        return _http_get_json(
+            base_url, "/api/report", {"month": month, "version": version, "page": page}
+        )
+
+    def parts_fetcher(month: str, version: str, combo: str) -> dict:
+        return _http_get_json(
+            base_url, "/api/report/parts", {"month": month, "version": version, "combo": combo}
+        )
+
+    return meta_fetcher, page_fetcher, parts_fetcher
 
 
 def create_app() -> Flask:
@@ -108,6 +134,37 @@ def create_app() -> Flask:
             months=MONTHS,
             selected_month=month,
             selected_k=raw_k,
+            result=result,
+            error=error,
+        )
+
+    @app.get("/reconcile")
+    def reconcile_view():
+        month = (request.args.get("month") or "").strip()
+
+        error: str | None = None
+        result: dict | None = None
+
+        if not month:
+            error = "请选择月份。"
+        elif month not in MONTHS:
+            error = f"不支持的月份: {month}"
+        else:
+            stations = {
+                STATION_A_LABEL: make_report_fetchers(STATION_A_URL),
+                STATION_B_LABEL: make_report_fetchers(STATION_B_URL),
+            }
+            try:
+                result = reconcile(month, stations)
+            except StationError as exc:
+                # 只提示出错站点，不展示另一站的半截数据；用户可直接重新查询
+                detail = f"：{exc.detail}" if exc.detail else ""
+                error = f"{exc.station} 取数失败{detail}，请稍后重新查询。"
+
+        return render_template(
+            "reconcile.html",
+            months=MONTHS,
+            selected_month=month,
             result=result,
             error=error,
         )

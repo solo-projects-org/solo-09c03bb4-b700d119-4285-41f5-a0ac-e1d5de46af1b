@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>月报核对 · 同单更换组合分析</title>
+  <style>
+    :root { --line: #d8dee6; --blue: #1f5fbf; --bg: #f5f7fa; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+           background: var(--bg); color: #1d2733; }
+    header { background: #10345f; color: #fff; padding: 18px 28px; }
+    header h1 { margin: 0; font-size: 20px; }
+    header p { margin: 6px 0 0; font-size: 13px; opacity: .82; }
+    nav { margin-top: 10px; font-size: 13px; }
+    nav a { color: #cfe1ff; margin-right: 18px; }
+    main { max-width: 1080px; margin: 24px auto; padding: 0 16px; }
+    .card { background: #fff; border: 1px solid var(--line); border-radius: 10px;
+            padding: 20px 24px; margin-bottom: 20px; }
+    form { display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end; }
+    label { font-size: 13px; color: #475569; display: block; margin-bottom: 6px; }
+    select, input { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px;
+                    font-size: 14px; min-width: 160px; }
+    button { background: var(--blue); color: #fff; border: 0; border-radius: 6px;
+             padding: 9px 22px; font-size: 14px; cursor: pointer; }
+    button:hover { background: #184c99; }
+    .error { background: #fdecec; border: 1px solid #f3b4b4; color: #9b1c1c;
+             padding: 12px 16px; border-radius: 8px; font-size: 14px; margin-bottom: 18px; }
+    table { width: 100%; border-collapse: collapse; font-size: 14px; }
+    th, td { border-bottom: 1px solid var(--line); padding: 9px 12px; text-align: left; }
+    th { background: #eef2f7; font-weight: 600; color: #334155; }
+    tr:last-child td { border-bottom: 0; }
+    .meta { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 14px; font-size: 13px; color: #475569; }
+    .pill { background: #eef2f7; border-radius: 999px; padding: 5px 12px; }
+    .pill.version { background: #e8f1ff; color: #144a92; font-family: ui-monospace, monospace; }
+    .pill.warn { background: #fff4e5; color: #92400e; }
+    h2 { font-size: 16px; margin: 0 0 14px; }
+    h3 { font-size: 15px; margin: 22px 0 10px; }
+    .muted { color: #64748b; font-size: 12px; margin-top: 8px; }
+    .conflict { border: 1px solid #f0c6a8; border-radius: 8px; padding: 14px 16px; margin-bottom: 16px; background: #fffaf5; }
+    .conflict-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+    .conflict-head strong { color: #9a3412; }
+    .tag { display: inline-block; background: #fde8d7; color: #9a3412; border-radius: 4px;
+           padding: 1px 7px; font-size: 12px; margin-left: 4px; }
+    .parts { font-family: ui-monospace, monospace; font-size: 13px; }
+    .empty { color: #166534; font-size: 14px; }
+    .pending { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 14px 16px; }
+  </style>
+</head>
+<body>
+<header>
+  <h1>月报核对 · 同单更换组合分析</h1>
+  <p>按月份核对两站编号与零件组：找出需要一起修正的编号组，缺定义记录单列待补</p>
+  <nav>
+    <a href="/">组合 Top-K 分析</a>
+    <a href="/reconcile">月报核对</a>
+  </nav>
+</header>
+<main>
+  <section class="card">
+    <form method="get" action="/reconcile">
+      <div>
+        <label for="month">月份</label>
+        <select id="month" name="month">
+          {% for m in months %}
+          <option value="{{ m }}" {% if m == selected_month %}selected{% endif %}>{{ m }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit">核对</button>
+    </form>
+    <p class="muted">核对时每站固定在当期一个版号上翻页与取清单；页面显示的版号即本次核对所用版本。</p>
+  </section>
+
+  {% if error %}
+  <div class="error" role="alert">{{ error }}</div>
+  {% endif %}
+
+  {% if result %}
+  <section class="card">
+    <h2>{{ result.month }} · 核对结果</h2>
+    <div class="meta">
+      {% for label, info in result.stations.items() %}
+      <span class="pill version">{{ label }} 版号 {{ info.version }}</span>
+      <span class="pill">{{ label }} 翻页 {{ info.pages_fetched }} 页 / {{ info.total }} 条</span>
+      {% endfor %}
+      <span class="pill {% if result.conflict_count %}warn{% endif %}">冲突组 {{ result.conflict_count }} 个</span>
+      <span class="pill">一致组 {{ result.consistent_group_count }} 个</span>
+      <span class="pill {% if result.pending_count %}warn{% endif %}">待补 {{ result.pending_count }} 条</span>
+    </div>
+    <p class="muted">分组规则：有零件定义的记录，按相同编号或相同零件集合连成一组（间接相连也归在一起）；组内出现不同（编号, 零件集合）组合即为冲突。仅冲突组向站点索取完整零件清单。</p>
+  </section>
+
+  <section class="card">
+    <h2>冲突组（需一起修正）</h2>
+    {% if result.conflict_groups %}
+      {% for group in result.conflict_groups %}
+      <div class="conflict" data-group="{{ group.index }}">
+        <div class="conflict-head">
+          <strong>冲突组 {{ group.index }}</strong>
+          <span>编号：{{ group.combo_ids|join('、') }}</span>
+          <span>涉及站点：{{ group.stations|join('、') }}</span>
+          <span class="tag">{{ group.records|length }} 条记录</span>
+        </div>
+        <table>
+          <thead>
+          <tr>
+            <th>站点</th>
+            <th>编号</th>
+            <th>申报次数</th>
+            <th>完整零件清单</th>
+          </tr>
+          </thead>
+          <tbody>
+          {% for rec in group.records %}
+          <tr>
+            <td>{{ rec.station }}</td>
+            <td>{{ rec.combo_id }}</td>
+            <td>{{ rec.count }}</td>
+            <td class="parts">{{ rec.parts|join('、') }}</td>
+          </tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endfor %}
+    {% else %}
+      <p class="empty">没有冲突组：两站编号与零件组一致。</p>
+    {% endif %}
+  </section>
+
+  <section class="card">
+    <h2>缺定义 · 待补</h2>
+    {% if result.pending %}
+    <div class="pending">
+      <p class="muted" style="margin-top:0">以下记录没有零件定义，无法参与分组，请站点补齐后重新核对。</p>
+      <table>
+        <thead>
+        <tr><th>站点</th><th>编号</th><th>申报次数</th></tr>
+        </thead>
+        <tbody>
+        {% for rec in result.pending %}
+        <tr>
+          <td>{{ rec.station }}</td>
+          <td>{{ rec.combo_id }}</td>
+          <td>{{ rec.count }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+      <p class="empty">没有缺定义的记录。</p>
+    {% endif %}
+  </section>
+  {% endif %}
+</main>
+</body>
+</html>

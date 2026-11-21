@@ -12,6 +12,8 @@
     header { background: #10345f; color: #fff; padding: 18px 28px; }
     header h1 { margin: 0; font-size: 20px; }
     header p { margin: 6px 0 0; font-size: 13px; opacity: .82; }
+    nav { margin-top: 10px; font-size: 13px; }
+    nav a { color: #cfe1ff; margin-right: 18px; }
     main { max-width: 960px; margin: 24px auto; padding: 0 16px; }
     .card { background: #fff; border: 1px solid var(--line); border-radius: 10px;
             padding: 20px 24px; margin-bottom: 20px; }
@@ -39,6 +41,10 @@
 <header>
   <h1>常备维修包 · 同单更换组合分析</h1>
   <p>按两维修站同单更换次数之和，列出前 K 个零件组合（同分按编号字典序）</p>
+  <nav>
+    <a href="/">组合 Top-K 分析</a>
+    <a href="/reconcile">月报核对</a>
+  </nav>
 </header>
 <main>
   <section class="card">

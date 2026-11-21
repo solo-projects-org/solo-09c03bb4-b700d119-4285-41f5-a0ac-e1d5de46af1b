@@ -27,7 +27,7 @@ services:
     build:
       context: ./web
     environment:
-      AVAILABLE_MONTHS: "2026-01,2026-02,2026-03,2026-04"
+      AVAILABLE_MONTHS: "2026-01,2026-02,2026-03,2026-04,2026-05"
       STATION_A_URL: "http://station-a:8000"
       STATION_B_URL: "http://station-b:8000"
       STATION_A_LABEL: "维修站A"

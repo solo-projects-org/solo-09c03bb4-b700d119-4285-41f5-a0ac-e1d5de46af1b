@@ -14,7 +14,9 @@
   4. 场景二 2026-02 K=3：首屏后即停（各 1 页）；
   5. 2026-04 K=1：未耗尽站点通过点查确认缺号零；
   6. 同分按编号字典序（2026-03）；
-  7. 失败隔离：指向不可达地址时只提示出错站点。
+  7. 失败隔离：指向不可达地址时只提示出错站点；
+  8. 月报核对 2026-05：两站版号展示、直接/间接冲突组、缺定义待补；
+  9. 核对撤版：旧版号翻页/取清单返回 409，网页只提示出错站点。
 """
 from __future__ import annotations
 
@@ -56,6 +58,22 @@ def parse_result_table(html: str):
     counts = re.search(r"点查次数.*?</span>", html, re.S)
     clean = lambda m: unescape(re.sub(r"<[^>]+>", "", m.group(0))) if m else ""
     return rows, clean(pages), clean(counts)
+
+
+def parse_reconcile(html: str):
+    """粗解析核对页：版号、冲突组块、待补行。"""
+    versions = dict(re.findall(
+        r"(维修站[AB]) 版号 ([0-9a-f]+)", html))
+    conflicts = re.findall(
+        r'<div class="conflict" data-group="(\d+)">(.*?)</div>\s*(?=<div class="conflict"|</section>)',
+        html, re.S,
+    )
+    pending_block = re.search(r"缺定义 · 待补(.*?)</section>", html, re.S)
+    pending = re.findall(
+        r"<td>(维修站[AB])</td>\s*<td>([^<]+)</td>\s*<td>(\d+)</td>",
+        pending_block.group(1) if pending_block else "",
+    )
+    return versions, conflicts, pending
 
 
 def main() -> int:
@@ -124,7 +142,7 @@ def main() -> int:
     web_dir = Path(__file__).resolve().parent.parent / "web"
     env = dict(os.environ)
     env.update({
-        "AVAILABLE_MONTHS": "2026-01,2026-02,2026-03,2026-04",
+        "AVAILABLE_MONTHS": "2026-01,2026-02,2026-03,2026-04,2026-05",
         "STATION_A_URL": args.station_a,
         "STATION_B_URL": f"http://127.0.0.1:{dead_port}",
         "PORT": str(probe_port),
@@ -155,6 +173,88 @@ def main() -> int:
     # 8. 参数校验：非法 K 只显示错误、不渲染结果表
     bad = get_text(f"{args.web}/query?month=2026-02&k=0")
     check("非法K显示错误且无结果表", 'class="error"' in bad and "<tbody>" not in bad)
+
+    # 9. 月报核对：两站同版取数、冲突分组、缺定义待补
+    meta_a = get_json(f"{args.station_a}/api/report/meta?month=2026-05")
+    meta_b = get_json(f"{args.station_b}/api/report/meta?month=2026-05")
+    check("核对元信息含版号", bool(meta_a["version"]) and bool(meta_b["version"]))
+    check("核对元信息分页数",
+          meta_a["total_pages"] == 1 and meta_b["total_pages"] == 2,
+          f'{meta_a["total_pages"]}/{meta_b["total_pages"]}')
+    # 同版内容固定：重复取元信息版号不变
+    meta_a2 = get_json(f"{args.station_a}/api/report/meta?month=2026-05")
+    check("同版内容版号固定", meta_a2["version"] == meta_a["version"])
+
+    page_ok = get_json(
+        f"{args.station_b}/api/report?"
+        + urllib.parse.urlencode({"month": "2026-05", "version": meta_b["version"], "page": 2})
+    )
+    check("同版翻页返回同一版号", page_ok["version"] == meta_b["version"])
+    old = get_text(
+        f"{args.station_b}/api/report?"
+        + urllib.parse.urlencode({"month": "2026-05", "version": "0" * 16, "page": 1})
+    )
+    check("旧版号翻页被拒", "version_withdrawn" in old)
+    old_parts = get_text(
+        f"{args.station_b}/api/report/parts?"
+        + urllib.parse.urlencode({"month": "2026-05", "version": "0" * 16, "combo": "COM-100"})
+    )
+    check("旧版号取清单被拒", "version_withdrawn" in old_parts)
+    missing_def = get_text(
+        f"{args.station_b}/api/report/parts?"
+        + urllib.parse.urlencode({"month": "2026-05", "version": meta_b["version"], "combo": "COM-900"})
+    )
+    check("缺定义清单返回错误", "missing_definition" in missing_def)
+
+    rec_html = get_text(f"{args.web}/reconcile?month=2026-05")
+    versions, conflicts, pending = parse_reconcile(rec_html)
+    check("页面标出两站版号",
+          versions.get("维修站A") == meta_a["version"]
+          and versions.get("维修站B") == meta_b["version"], str(versions))
+    check("页面冲突组数量", len(conflicts) == 2, str(len(conflicts)))
+    indirect = next((body for _, body in conflicts if "COM-700" in body), "")
+    check("间接冲突组合并同组",
+          "COM-300" in indirect and "COM-700" in indirect
+          and "P8" in indirect and "P4" in indirect, indirect[:200])
+    direct = next((body for _, body in conflicts if "COM-100" in body), "")
+    check("直接冲突组含两站记录",
+          "维修站A" in direct and "维修站B" in direct
+          and "P1" in direct and "P3" in direct)
+    check("冲突组未混入一致组", "COM-200" not in rec_html and "COM-400" not in rec_html)
+    check("缺定义记录单列待补",
+          set(pending) == {("维修站A", "COM-500", "3"), ("维修站B", "COM-900", "1")},
+          str(pending))
+
+    # 10. 核对撤版：B 站版号在翻页后变化，页面只提示出错站点且无半截结果
+    env2 = dict(env)
+    env2["PORT"] = str(probe_port + 1)
+    probe2_url = f"http://127.0.0.1:{probe_port + 1}"
+    # 用真实站点：向站点 B 请求一个不存在的旧版号无法从网页触发，
+    # 因此这里改用“B 站不可达”验证核对页同样只提示出错站点。
+    env2["STATION_B_URL"] = f"http://127.0.0.1:{dead_port}"
+    proc2 = subprocess.Popen(
+        [sys.executable, "app.py"], cwd=web_dir, env=env2,
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    )
+    try:
+        for _ in range(50):
+            try:
+                urllib.request.urlopen(f"{probe2_url}/", timeout=1).read()
+                break
+            except Exception:
+                time.sleep(0.1)
+        html_rec_bad = get_text(f"{probe2_url}/reconcile?month=2026-05")
+        check("核对失败隔离 只提示维修站B",
+              "维修站B 取数失败" in html_rec_bad
+              and "维修站A 取数失败" not in html_rec_bad)
+        check("核对失败隔离 无半截结果", 'class="conflict"' not in html_rec_bad
+              and "核对结果" not in html_rec_bad)
+    finally:
+        proc2.terminate()
+        try:
+            proc2.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc2.kill()
 
     print()
     if failures:
